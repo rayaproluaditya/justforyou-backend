@@ -4,18 +4,35 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 
 const app = express();
+
+// Middleware
 app.use(cors());
 app.use(express.json());
 
+// --------------------
 // MongoDB Connection
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB connected"))
-  .catch(err => console.error(err));
+// --------------------
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => console.log("✅ MongoDB Connected"))
+  .catch((err) => console.error("❌ MongoDB Error:", err));
 
-// Message Schema
+// --------------------
+// Schema
+// --------------------
 const MessageSchema = new mongoose.Schema({
-  text: String,
-  emotion: String,
+  username: {
+    type: String,
+    required: true
+  },
+  text: {
+    type: String,
+    required: true
+  },
+  emotion: {
+    type: String,
+    required: true
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -24,35 +41,66 @@ const MessageSchema = new mongoose.Schema({
 
 const Message = mongoose.model("Message", MessageSchema);
 
+// --------------------
 // Routes
+// --------------------
+
+// Health check
 app.get("/", (req, res) => {
-  res.send("JustForYou Backend Running");
+  res.send("✅ JustForYou Backend Running");
 });
 
-// Save Message
+// Save message
 app.post("/api/messages", async (req, res) => {
   try {
-    const { text, emotion } = req.body;
+    const { text, emotion, username } = req.body;
 
-    const message = new Message({
+    if (!text || !emotion || !username) {
+      return res.status(400).json({ error: "Missing fields" });
+    }
+
+    const newMessage = new Message({
       text,
-      emotion
+      emotion,
+      username
     });
 
-    await message.save();
+    await newMessage.save();
 
-    res.json({ success: true, message: "Saved successfully" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to save message" });
+    res.json({ success: true, message: "Message saved" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error" });
   }
 });
 
-// Get Messages (for dashboard later)
+// Get all messages (Dashboard)
 app.get("/api/messages", async (req, res) => {
-  const messages = await Message.find().sort({ createdAt: -1 });
-  res.json(messages);
+  try {
+    const messages = await Message.find().sort({ createdAt: -1 });
+    res.json(messages);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch messages" });
+  }
 });
 
+// Get messages by username (Public Profile)
+app.get("/api/messages/:username", async (req, res) => {
+  try {
+    const { username } = req.params;
+
+    const messages = await Message.find({ username }).sort({
+      createdAt: -1
+    });
+
+    res.json(messages);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch user messages" });
+  }
+});
+
+// --------------------
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log("Server running on", PORT));
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
