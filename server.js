@@ -28,8 +28,8 @@ const MessageSchema = new mongoose.Schema({
 });
 
 const UserSchema = new mongoose.Schema({
-  email: { type: String, required: true, unique: true },
-  username: { type: String, required: true },
+  email: { type: String, required: true },
+  username: { type: String, unique: true, required: true },
   loginToken: String,
   tokenExpiry: Date
 });
@@ -45,16 +45,44 @@ app.get("/", (req, res) => {
 });
 
 /* ============================
+   USER PROFILE CREATION
+============================ */
+app.post("/api/users/create", async (req, res) => {
+  const { username, email } = req.body;
+
+  if (!username || !email) {
+    return res.status(400).json({ error: "Username and email required" });
+  }
+
+  const exists = await User.findOne({ username });
+  if (exists) {
+    return res.status(400).json({ error: "Username already taken" });
+  }
+
+  await User.create({ username, email });
+
+  res.json({
+    success: true,
+    profileUrl: `/profile/${username}`
+  });
+});
+
+/* ============================
    MESSAGE ROUTES
 ============================ */
 
-// Save message
+// Send message
 app.post("/api/messages", async (req, res) => {
   try {
     const { text, emotion, username } = req.body;
 
     if (!text || !emotion || !username) {
       return res.status(400).json({ error: "Missing fields" });
+    }
+
+    const userExists = await User.findOne({ username });
+    if (!userExists) {
+      return res.status(404).json({ error: "User not found" });
     }
 
     await Message.create({ text, emotion, username });
@@ -64,7 +92,7 @@ app.post("/api/messages", async (req, res) => {
   }
 });
 
-// Get all messages (Dashboard)
+// Get all messages (dashboard)
 app.get("/api/messages", async (req, res) => {
   try {
     const messages = await Message.find().sort({ createdAt: -1 });
@@ -83,15 +111,13 @@ app.get("/api/messages/:username", async (req, res) => {
 
     res.json(messages);
   } catch {
-    res.status(500).json({ error: "Failed to fetch messages" });
+    res.status(500).json({ error: "Failed to fetch user messages" });
   }
 });
 
 /* ============================
-   MAGIC LINK AUTH
+   MAGIC LINK LOGIN
 ============================ */
-
-// Send login link
 app.post("/api/auth/request-login", async (req, res) => {
   const { email, username } = req.body;
 
@@ -125,10 +151,10 @@ app.post("/api/auth/request-login", async (req, res) => {
   await transporter.sendMail({
     from: "JustForYou <no-reply@justforyou.com>",
     to: email,
-    subject: "Your Login Link",
+    subject: "Login to JustForYou",
     html: `
       <h2>Login to JustForYou</h2>
-      <p>Click the link below:</p>
+      <p>Click the link below to login:</p>
       <a href="${loginLink}">${loginLink}</a>
       <p>This link expires in 15 minutes.</p>
     `
@@ -137,7 +163,9 @@ app.post("/api/auth/request-login", async (req, res) => {
   res.json({ success: true });
 });
 
-// Verify token
+/* ============================
+   VERIFY LOGIN TOKEN
+============================ */
 app.get("/api/auth/verify", async (req, res) => {
   const { token } = req.query;
 
