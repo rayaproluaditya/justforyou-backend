@@ -18,7 +18,7 @@ mongoose
   .catch((err) => console.error("❌ MongoDB Error:", err));
 
 /* ============================
-   SCHEMAS
+   MODELS
 ============================ */
 const MessageSchema = new mongoose.Schema({
   username: { type: String, required: true },
@@ -28,8 +28,8 @@ const MessageSchema = new mongoose.Schema({
 });
 
 const UserSchema = new mongoose.Schema({
-  email: { type: String, required: true },
   username: { type: String, unique: true, required: true },
+  email: { type: String, required: true },
   loginToken: String,
   tokenExpiry: Date
 });
@@ -38,71 +38,62 @@ const Message = mongoose.model("Message", MessageSchema);
 const User = mongoose.model("User", UserSchema);
 
 /* ============================
-   BASIC ROUTE
+   HEALTH CHECK
 ============================ */
 app.get("/", (req, res) => {
   res.send("✅ JustForYou Backend Running");
 });
 
 /* ============================
-   USER PROFILE CREATION
+   CREATE USER PROFILE
 ============================ */
 app.post("/api/users/create", async (req, res) => {
-  const { username, email } = req.body;
+  try {
+    const { username, email } = req.body;
 
-  if (!username || !email) {
-    return res.status(400).json({ error: "Username and email required" });
+    if (!username || !email)
+      return res.status(400).json({ error: "Missing fields" });
+
+    const exists = await User.findOne({ username });
+    if (exists)
+      return res.status(400).json({ error: "Username already taken" });
+
+    await User.create({ username, email });
+
+    res.json({
+      success: true,
+      profileUrl: `/profile/${username}`
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Server error" });
   }
-
-  const exists = await User.findOne({ username });
-  if (exists) {
-    return res.status(400).json({ error: "Username already taken" });
-  }
-
-  await User.create({ username, email });
-
-  res.json({
-    success: true,
-    profileUrl: `/profile/${username}`
-  });
 });
 
 /* ============================
-   MESSAGE ROUTES
+   SEND MESSAGE (PUBLIC)
 ============================ */
-
-// Send message
 app.post("/api/messages", async (req, res) => {
   try {
     const { text, emotion, username } = req.body;
 
-    if (!text || !emotion || !username) {
+    if (!text || !emotion || !username)
       return res.status(400).json({ error: "Missing fields" });
-    }
 
-    const userExists = await User.findOne({ username });
-    if (!userExists) {
+    const user = await User.findOne({ username });
+    if (!user)
       return res.status(404).json({ error: "User not found" });
-    }
 
     await Message.create({ text, emotion, username });
+
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: "Server error" });
   }
 });
 
-// Get all messages (dashboard)
-app.get("/api/messages", async (req, res) => {
-  try {
-    const messages = await Message.find().sort({ createdAt: -1 });
-    res.json(messages);
-  } catch {
-    res.status(500).json({ error: "Failed to fetch messages" });
-  }
-});
-
-// Get messages by username
+/* ============================
+   GET USER MESSAGES
+============================ */
 app.get("/api/messages/:username", async (req, res) => {
   try {
     const messages = await Message.find({
@@ -111,56 +102,59 @@ app.get("/api/messages/:username", async (req, res) => {
 
     res.json(messages);
   } catch {
-    res.status(500).json({ error: "Failed to fetch user messages" });
+    res.status(500).json({ error: "Failed to fetch messages" });
   }
 });
 
 /* ============================
-   MAGIC LINK LOGIN
+   MAGIC LOGIN (EMAIL)
 ============================ */
 app.post("/api/auth/request-login", async (req, res) => {
-  const { email, username } = req.body;
+  try {
+    const { email, username } = req.body;
 
-  if (!email || !username) {
-    return res.status(400).json({ error: "Missing fields" });
+    if (!email || !username)
+      return res.status(400).json({ error: "Missing fields" });
+
+    const token = crypto.randomBytes(32).toString("hex");
+
+    await User.findOneAndUpdate(
+      { email },
+      {
+        email,
+        username,
+        loginToken: token,
+        tokenExpiry: Date.now() + 15 * 60 * 1000
+      },
+      { upsert: true }
+    );
+
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.EMAIL,
+        pass: process.env.EMAIL_PASSWORD
+      }
+    });
+
+    const loginLink = `${process.env.FRONTEND_URL}/login?token=${token}`;
+
+    await transporter.sendMail({
+      from: "JustForYou <no-reply@justforyou.com>",
+      to: email,
+      subject: "Login to JustForYou",
+      html: `
+        <h3>Login to JustForYou</h3>
+        <p>Click below to login:</p>
+        <a href="${loginLink}">${loginLink}</a>
+        <p>This link expires in 15 minutes.</p>
+      `
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Email send failed" });
   }
-
-  const token = crypto.randomBytes(32).toString("hex");
-
-  await User.findOneAndUpdate(
-    { email },
-    {
-      email,
-      username,
-      loginToken: token,
-      tokenExpiry: Date.now() + 15 * 60 * 1000
-    },
-    { upsert: true }
-  );
-
-  const transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: process.env.EMAIL,
-      pass: process.env.EMAIL_PASSWORD
-    }
-  });
-
-  const loginLink = `${process.env.FRONTEND_URL}/login?token=${token}`;
-
-  await transporter.sendMail({
-    from: "JustForYou <no-reply@justforyou.com>",
-    to: email,
-    subject: "Login to JustForYou",
-    html: `
-      <h2>Login to JustForYou</h2>
-      <p>Click the link below to login:</p>
-      <a href="${loginLink}">${loginLink}</a>
-      <p>This link expires in 15 minutes.</p>
-    `
-  });
-
-  res.json({ success: true });
 });
 
 /* ============================
@@ -174,9 +168,8 @@ app.get("/api/auth/verify", async (req, res) => {
     tokenExpiry: { $gt: Date.now() }
   });
 
-  if (!user) {
+  if (!user)
     return res.status(401).json({ error: "Invalid or expired token" });
-  }
 
   res.json({
     success: true,
@@ -186,7 +179,7 @@ app.get("/api/auth/verify", async (req, res) => {
 });
 
 /* ============================
-   SERVER START
+   START SERVER
 ============================ */
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
